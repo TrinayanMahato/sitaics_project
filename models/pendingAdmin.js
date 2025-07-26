@@ -59,13 +59,6 @@ const pendingAdminSchema = new mongoose.Schema({
   processedDate: {
     type: Date,
     default: null
-  },
-  
-  // Notes from admin who processed the request
-  notes: {
-    type: String,
-    trim: true,
-    default: ''
   }
 }, {
   collection: 'pending_admins',
