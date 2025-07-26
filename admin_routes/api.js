@@ -107,6 +107,191 @@ app.post('/api/login', async (req, res) => {
 });
 
 
+// Route for admin registration
+app.post('/api/admin/register', async (req, res) => {
+  try {
+    // Retrieve all the information about the new admin
+    const { name, email, phoneNumber, password } = req.body;
+
+    // Validate required fields
+    if (!name || !email || !phoneNumber || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'All fields (name, email, phoneNumber, password) are required'
+      });
+    }
+
+    // Check if admin already exists
+    const existingAdmin = await Admin.findOne({ email: email.toLowerCase() });
+    if (existingAdmin) {
+      return res.status(409).json({
+        success: false,
+        error: 'Admin with this email already exists'
+      });
+    }
+
+    // Check if pending admin already exists
+    const existingPendingAdmin = await PendingAdmin.findOne({ email: email.toLowerCase() });
+    if (existingPendingAdmin) {
+      return res.status(409).json({
+        success: false,
+        error: 'Registration request already pending for this email'
+      });
+    }
+
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create pending admin
+    const pendingAdmin = new PendingAdmin({
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
+      phoneNumber: phoneNumber.trim(),
+      password: hashedPassword
+    });
+
+    await pendingAdmin.save();
+
+    // Send verification email using nodemailer
+    const mailOptions = {
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: 'Admin Registration Verification - Rashtriya Raksha University',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2>Admin Registration Verification</h2>
+          <p>Dear ${name},</p>
+          <p>You have registered in our website <strong>Rashtriya Raksha University</strong> as an admin. Is it you?</p>
+          <p>Please confirm your registration by clicking one of the options below:</p>
+          <div style="margin: 20px 0;">
+            <a href="${process.env.BASE_URL || 'http://localhost:3000'}/api/admin/verify/yes/${pendingAdmin._id}" 
+               style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; margin-right: 10px; border-radius: 5px;">
+               YES
+            </a>
+            <a href="${process.env.BASE_URL || 'http://localhost:3000'}/api/admin/verify/no/${pendingAdmin._id}" 
+               style="background-color: #f44336; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">
+               NO
+            </a>
+          </div>
+          <p>If you did not register for this account, please click NO.</p>
+          <p>Thank you,<br>Rashtriya Raksha University Team</p>
+        </div>
+      `
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    res.status(201).json({
+      success: true,
+      message: 'Registration request submitted successfully. Please check your email for verification.',
+      pendingAdminId: pendingAdmin._id
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+
+// Route for email verification - YES option
+app.get('/api/admin/verify/yes/:pendingAdminId', async (req, res) => {
+  try {
+    const { pendingAdminId } = req.params;
+
+    // Find the pending admin
+    const pendingAdmin = await PendingAdmin.findById(pendingAdminId);
+    if (!pendingAdmin) {
+      return res.status(404).json({
+        success: false,
+        error: 'Pending admin not found'
+      });
+    }
+
+    // Check if already processed
+    if (pendingAdmin.status !== 'pending') {
+      return res.status(400).json({
+        success: false,
+        error: 'Registration request already processed'
+      });
+    }
+
+    // Create the admin
+    const newAdmin = new Admin({
+      name: pendingAdmin.name,
+      email: pendingAdmin.email,
+      phoneNumber: pendingAdmin.phoneNumber,
+      password: pendingAdmin.password
+    });
+
+    await newAdmin.save();
+
+    // Update pending admin status
+    pendingAdmin.status = 'approved';
+    pendingAdmin.processedDate = new Date();
+    await pendingAdmin.save();
+
+    res.json({
+      success: true,
+      message: 'Admin registration confirmed successfully! You can now login.',
+      admin: {
+        id: newAdmin._id,
+        name: newAdmin.name,
+        email: newAdmin.email
+      }
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Route for email verification - NO option
+app.get('/api/admin/verify/no/:pendingAdminId', async (req, res) => {
+  try {
+    const { pendingAdminId } = req.params;
+
+    // Find the pending admin
+    const pendingAdmin = await PendingAdmin.findById(pendingAdminId);
+    if (!pendingAdmin) {
+      return res.status(404).json({
+        success: false,
+        error: 'Pending admin not found'
+      });
+    }
+
+    // Check if already processed
+    if (pendingAdmin.status !== 'pending') {
+      return res.status(400).json({
+        success: false,
+        error: 'Registration request already processed'
+      });
+    }
+
+    // Update pending admin status to rejected
+    pendingAdmin.status = 'rejected';
+    pendingAdmin.processedDate = new Date();
+    await pendingAdmin.save();
+
+    res.json({
+      success: true,
+      message: 'Admin registration has been declined. The request has been rejected.'
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+
 // Route to get all MOUs information
 app.get('/api/mous', async (req, res) => {
   try {
