@@ -275,6 +275,448 @@ app.get('/api/fields/:fieldId', authenticateToken, asyncHandler(async (req, res)
   });
 }));
 
+// Route for bulk importing MOUs from Excel
+app.post('/api/mous/import', authenticateToken, upload.single('excelFile'), asyncHandler(async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({
+      success: false,
+      error: 'Excel file is required'
+    });
+  }
+
+  try {
+    // Parse Excel file
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const jsonData = XLSX.utils.sheet_to_json(worksheet, { raw: false });
+
+    if (!jsonData || jsonData.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Excel file is empty or invalid'
+      });
+    }
+
+    const results = {
+      success: [],
+      errors: [],
+      duplicates: []
+    };
+
+    // Process each row
+    for (let i = 0; i < jsonData.length; i++) {
+      const row = jsonData[i];
+      const rowNumber = i + 2;
+
+      try {
+        // Sanitize inputs
+        const ID = sanitizeInput(row.ID || row.id || '');
+        const nameOfPartnerInstitution = sanitizeInput(row.nameOfPartnerInstitution || row.NameOfPartnerInstitution || '');
+        const strategicAreas = sanitizeInput(row.strategicAreas || row.StrategicAreas || '');
+
+        // Validate required fields
+        if (!ID || !nameOfPartnerInstitution || !strategicAreas) {
+          results.errors.push({
+            row: rowNumber,
+            data: row,
+            error: 'Missing required fields (ID, nameOfPartnerInstitution, strategicAreas)'
+          });
+          continue;
+        }
+
+        // Check for duplicate ID
+        const existingMOU = await MOU.findOne({ ID: ID });
+        if (existingMOU) {
+          results.duplicates.push({
+            row: rowNumber,
+            data: row,
+            error: 'MOU with this ID already exists'
+          });
+          continue;
+        }
+
+        // Check if school exists, create or update
+        const trimmedSchoolName = nameOfPartnerInstitution.trim();
+        let existingSchool = await School.findOne({ name: trimmedSchoolName });
+
+        if (!existingSchool) {
+          const newSchool = new School({
+            name: trimmedSchoolName,
+            count: 1
+          });
+          await newSchool.save();
+        } else {
+          existingSchool.count += 1;
+          await existingSchool.save();
+        }
+
+        // Create new MOU
+        const newMOU = new MOU({
+          ID: ID.trim(),
+          nameOfPartnerInstitution: trimmedSchoolName,
+          strategicAreas: strategicAreas.trim()
+        });
+
+        const savedMOU = await newMOU.save();
+        results.success.push({
+          row: rowNumber,
+          data: savedMOU
+        });
+
+      } catch (error) {
+        results.errors.push({
+          row: rowNumber,
+          data: row,
+          error: error.message
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Bulk import completed',
+      results: {
+        totalRows: jsonData.length,
+        successCount: results.success.length,
+        errorCount: results.errors.length,
+        duplicateCount: results.duplicates.length,
+        details: results
+      }
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Error processing Excel file: ' + error.message
+    });
+  }
+}));
+
+// Route for bulk importing students from Excel
+app.post('/api/participants/import', authenticateToken, upload.single('excelFile'), asyncHandler(async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({
+      success: false,
+      error: 'Excel file is required'
+    });
+  }
+
+  try {
+    // Parse Excel file
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const jsonData = XLSX.utils.sheet_to_json(worksheet, { raw: false });
+
+    if (!jsonData || jsonData.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Excel file is empty or invalid'
+      });
+    }
+
+    const results = {
+      success: [],
+      errors: [],
+      duplicates: []
+    };
+
+    // Process each row
+    for (let i = 0; i < jsonData.length; i++) {
+      const row = jsonData[i];
+      const rowNumber = i + 2;
+
+      try {
+        // Sanitize string fields
+        const participantData = {};
+        const stringFields = [
+          'batchNo', 'rank', 'serialNumberRRU', 'enrollmentNumber', 'fullName',
+          'birthPlace', 'birthState', 'country', 'aadharNo', 'mobileNumber',
+          'alternateNumber', 'email', 'address'
+        ];
+
+        // Map and sanitize data from Excel row
+        participantData.srNo = parseInt(row.srNo || row.SrNo || row.serialNumber || '0');
+        participantData.batchNo = sanitizeInput(row.batchNo || row.BatchNo || '');
+        participantData.rank = sanitizeInput(row.rank || row.Rank || '');
+        participantData.serialNumberRRU = sanitizeInput(row.serialNumberRRU || row.SerialNumberRRU || '');
+        participantData.enrollmentNumber = sanitizeInput(row.enrollmentNumber || row.EnrollmentNumber || '');
+        participantData.fullName = sanitizeInput(row.fullName || row.FullName || '');
+        participantData.gender = row.gender || row.Gender || '';
+        participantData.dateOfBirth = row.dateOfBirth || row.DateOfBirth || '';
+        participantData.birthPlace = sanitizeInput(row.birthPlace || row.BirthPlace || '');
+        participantData.birthState = sanitizeInput(row.birthState || row.BirthState || '');
+        participantData.country = sanitizeInput(row.country || row.Country || '');
+        participantData.aadharNo = sanitizeInput(row.aadharNo || row.AadharNo || '');
+        participantData.mobileNumber = sanitizeInput(row.mobileNumber || row.MobileNumber || '');
+        participantData.alternateNumber = sanitizeInput(row.alternateNumber || row.AlternateNumber || '');
+        participantData.email = sanitizeInput(row.email || row.Email || '');
+        participantData.address = sanitizeInput(row.address || row.Address || '');
+
+        // Validate required fields
+        const requiredFields = [
+          'srNo', 'batchNo', 'rank', 'serialNumberRRU', 'enrollmentNumber',
+          'fullName', 'gender', 'dateOfBirth', 'birthPlace', 'birthState',
+          'country', 'aadharNo', 'mobileNumber', 'email', 'address'
+        ];
+
+        let missingFields = [];
+        for (const field of requiredFields) {
+          if (!participantData[field] || (field === 'srNo' && participantData[field] === 0)) {
+            missingFields.push(field);
+          }
+        }
+
+        if (missingFields.length > 0) {
+          results.errors.push({
+            row: rowNumber,
+            data: row,
+            error: `Missing required fields: ${missingFields.join(', ')}`
+          });
+          continue;
+        }
+
+        // Validate date format
+        const dateOfBirth = new Date(participantData.dateOfBirth);
+        if (isNaN(dateOfBirth.getTime())) {
+          results.errors.push({
+            row: rowNumber,
+            data: row,
+            error: 'Invalid date format for dateOfBirth'
+          });
+          continue;
+        }
+        participantData.dateOfBirth = dateOfBirth;
+
+        // Check for duplicates
+        const existingParticipant = await Candidate.findOne({
+          $or: [
+            { enrollmentNumber: participantData.enrollmentNumber },
+            { aadharNo: participantData.aadharNo },
+            { email: participantData.email.toLowerCase() }
+          ]
+        });
+
+        if (existingParticipant) {
+          results.duplicates.push({
+            row: rowNumber,
+            data: row,
+            error: 'Participant with this enrollment number, Aadhar number, or email already exists'
+          });
+          continue;
+        }
+
+        // Create new participant
+        const newParticipant = new Candidate(participantData);
+        const savedParticipant = await newParticipant.save();
+        
+        results.success.push({
+          row: rowNumber,
+          data: savedParticipant
+        });
+
+      } catch (error) {
+        results.errors.push({
+          row: rowNumber,
+          data: row,
+          error: error.message
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Bulk import completed',
+      results: {
+        totalRows: jsonData.length,
+        successCount: results.success.length,
+        errorCount: results.errors.length,
+        duplicateCount: results.duplicates.length,
+        details: results
+      }
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Error processing Excel file: ' + error.message
+    });
+  }
+}));
+
+// Route for bulk importing courses from Excel
+app.post('/api/courses/import', authenticateToken, upload.single('excelFile'), asyncHandler(async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({
+      success: false,
+      error: 'Excel file is required'
+    });
+  }
+
+  try {
+    // Parse Excel file
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const jsonData = XLSX.utils.sheet_to_json(worksheet, { raw: false });
+
+    if (!jsonData || jsonData.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Excel file is empty or invalid'
+      });
+    }
+
+    const results = {
+      success: [],
+      errors: [],
+      duplicates: []
+    };
+
+    // Process each row
+    for (let i = 0; i < jsonData.length; i++) {
+      const row = jsonData[i];
+      const rowNumber = i + 2; // Excel row number (starting from row 2, assuming row 1 is headers)
+
+      try {
+        // Sanitize inputs
+        const ID = sanitizeInput(row.ID || row.id || '');
+        const Name = sanitizeInput(row.Name || row.name || '');
+        const field = sanitizeInput(row.field || row.Field || '');
+        const eligibleDepartments = row.eligibleDepartments || row.EligibleDepartments || '';
+        const startDate = row.startDate || row.StartDate || '';
+        const endDate = row.endDate || row.EndDate || '';
+        const completed = row.completed || row.Completed || 'no';
+
+        // Validate required fields
+        if (!ID || !Name || !field || !eligibleDepartments || !startDate || !endDate) {
+          results.errors.push({
+            row: rowNumber,
+            data: row,
+            error: 'Missing required fields (ID, Name, field, eligibleDepartments, startDate, endDate)'
+          });
+          continue;
+        }
+
+        // Check for duplicate ID
+        const existingCourse = await Course.findOne({ ID: ID });
+        if (existingCourse) {
+          results.duplicates.push({
+            row: rowNumber,
+            data: row,
+            error: 'Course with this ID already exists'
+          });
+          continue;
+        }
+
+        // Process eligibleDepartments - convert string to array if needed
+        let departmentsArray;
+        if (typeof eligibleDepartments === 'string') {
+          departmentsArray = eligibleDepartments.split(',').map(dept => sanitizeInput(dept).trim()).filter(dept => dept);
+        } else if (Array.isArray(eligibleDepartments)) {
+          departmentsArray = eligibleDepartments.map(dept => sanitizeInput(dept).trim()).filter(dept => dept);
+        } else {
+          results.errors.push({
+            row: rowNumber,
+            data: row,
+            error: 'eligibleDepartments must be a string (comma-separated) or array'
+          });
+          continue;
+        }
+
+        if (departmentsArray.length === 0) {
+          results.errors.push({
+            row: rowNumber,
+            data: row,
+            error: 'At least one eligible department must be specified'
+          });
+          continue;
+        }
+
+        // Validate dates
+        const startDateObj = new Date(startDate);
+        const endDateObj = new Date(endDate);
+
+        if (isNaN(startDateObj.getTime()) || isNaN(endDateObj.getTime())) {
+          results.errors.push({
+            row: rowNumber,
+            data: row,
+            error: 'Invalid date format'
+          });
+          continue;
+        }
+
+        if (startDateObj >= endDateObj) {
+          results.errors.push({
+            row: rowNumber,
+            data: row,
+            error: 'End date must be after start date'
+          });
+          continue;
+        }
+
+        // Check if field exists, create if not
+        const trimmedField = field.trim();
+        let existingField = await Field.findOne({ nameOfTheField: trimmedField });
+
+        if (!existingField) {
+          const newField = new Field({
+            nameOfTheField: trimmedField,
+            count: 1
+          });
+          await newField.save();
+        } else {
+          existingField.count += 1;
+          await existingField.save();
+        }
+
+        // Create new course
+        const newCourse = new Course({
+          ID: ID.trim(),
+          Name: Name.trim(),
+          eligibleDepartments: departmentsArray,
+          startDate: startDateObj,
+          endDate: endDateObj,
+          completed: completed || 'no',
+          field: trimmedField
+        });
+
+        const savedCourse = await newCourse.save();
+        results.success.push({
+          row: rowNumber,
+          data: savedCourse
+        });
+
+      } catch (error) {
+        results.errors.push({
+          row: rowNumber,
+          data: row,
+          error: error.message
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Bulk import completed',
+      results: {
+        totalRows: jsonData.length,
+        successCount: results.success.length,
+        errorCount: results.errors.length,
+        duplicateCount: results.duplicates.length,
+        details: results
+      }
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Error processing Excel file: ' + error.message
+    });
+  }
+}));
+
 // Route for admin registration
 app.post('/api/admin/register', asyncHandler(async (req, res) => {
   // Retrieve all the information about the new admin
