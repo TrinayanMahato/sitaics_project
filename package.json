@@ -1,0 +1,38 @@
+{
+  "name": "sispa-university-admin-panel",
+  "version": "1.0.0",
+  "description": "University Admin Panel - MERN Stack Dashboard for managing academic data",
+  "main": "admin_routes/api.js",
+  "scripts": {
+    "start": "node admin_routes/api.js",
+    "dev": "nodemon admin_routes/api.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "mern",
+    "university",
+    "admin",
+    "dashboard",
+    "mongodb",
+    "express",
+    "nodejs"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "mongoose": "^7.5.0",
+    "bcrypt": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "nodemailer": "^6.9.4",
+    "validator": "^13.11.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+} 

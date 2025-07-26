@@ -1,9 +1,24 @@
 const express = require('express');
 const mongoose = require('mongoose');
-
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const nodemailer = require('nodemailer');
+require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// JWT Secret
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+
+// Configure Nodemailer
+const transporter = nodemailer.createTransporter({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
+  }
+});
 
 // Middleware
 app.use(express.json());
@@ -19,7 +34,8 @@ const MOU = require('../models/MOU');
 const Course = require('../models/courses');
 const School = require('../models/school');
 const Field = require('../models/fields');
-
+const Admin = require('../models/admin');
+const PendingAdmin = require('../models/pendingAdmin');
 
 
 // JWT Authentication Middleware
@@ -98,191 +114,6 @@ app.post('/api/login', async (req, res) => {
         email: admin.email
       }
     });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-
-// Route for admin registration
-app.post('/api/admin/register', async (req, res) => {
-  try {
-    // Retrieve all the information about the new admin
-    const { name, email, phoneNumber, password } = req.body;
-
-    // Validate required fields
-    if (!name || !email || !phoneNumber || !password) {
-      return res.status(400).json({
-        success: false,
-        error: 'All fields (name, email, phoneNumber, password) are required'
-      });
-    }
-
-    // Check if admin already exists
-    const existingAdmin = await Admin.findOne({ email: email.toLowerCase() });
-    if (existingAdmin) {
-      return res.status(409).json({
-        success: false,
-        error: 'Admin with this email already exists'
-      });
-    }
-
-    // Check if pending admin already exists
-    const existingPendingAdmin = await PendingAdmin.findOne({ email: email.toLowerCase() });
-    if (existingPendingAdmin) {
-      return res.status(409).json({
-        success: false,
-        error: 'Registration request already pending for this email'
-      });
-    }
-
-    // Hash the password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Create pending admin
-    const pendingAdmin = new PendingAdmin({
-      name: name.trim(),
-      email: email.toLowerCase().trim(),
-      phoneNumber: phoneNumber.trim(),
-      password: hashedPassword
-    });
-
-    await pendingAdmin.save();
-
-    // Send verification email using nodemailer
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
-      to: email,
-      subject: 'Admin Registration Verification - Rashtriya Raksha University',
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2>Admin Registration Verification</h2>
-          <p>Dear ${name},</p>
-          <p>You have registered in our website <strong>Rashtriya Raksha University</strong> as an admin. Is it you?</p>
-          <p>Please confirm your registration by clicking one of the options below:</p>
-          <div style="margin: 20px 0;">
-            <a href="${process.env.BASE_URL || 'http://localhost:3000'}/api/admin/verify/yes/${pendingAdmin._id}" 
-               style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; margin-right: 10px; border-radius: 5px;">
-               YES
-            </a>
-            <a href="${process.env.BASE_URL || 'http://localhost:3000'}/api/admin/verify/no/${pendingAdmin._id}" 
-               style="background-color: #f44336; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">
-               NO
-            </a>
-          </div>
-          <p>If you did not register for this account, please click NO.</p>
-          <p>Thank you,<br>Rashtriya Raksha University Team</p>
-        </div>
-      `
-    };
-
-    await transporter.sendMail(mailOptions);
-
-    res.status(201).json({
-      success: true,
-      message: 'Registration request submitted successfully. Please check your email for verification.',
-      pendingAdminId: pendingAdmin._id
-    });
-
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-
-// Route for email verification - YES option
-app.get('/api/admin/verify/yes/:pendingAdminId', async (req, res) => {
-  try {
-    const { pendingAdminId } = req.params;
-
-    // Find the pending admin
-    const pendingAdmin = await PendingAdmin.findById(pendingAdminId);
-    if (!pendingAdmin) {
-      return res.status(404).json({
-        success: false,
-        error: 'Pending admin not found'
-      });
-    }
-
-    // Check if already processed
-    if (pendingAdmin.status !== 'pending') {
-      return res.status(400).json({
-        success: false,
-        error: 'Registration request already processed'
-      });
-    }
-
-    // Create the admin
-    const newAdmin = new Admin({
-      name: pendingAdmin.name,
-      email: pendingAdmin.email,
-      phoneNumber: pendingAdmin.phoneNumber,
-      password: pendingAdmin.password
-    });
-
-    await newAdmin.save();
-
-    // Update pending admin status
-    pendingAdmin.status = 'approved';
-    pendingAdmin.processedDate = new Date();
-    await pendingAdmin.save();
-
-    res.json({
-      success: true,
-      message: 'Admin registration confirmed successfully! You can now login.',
-      admin: {
-        id: newAdmin._id,
-        name: newAdmin.name,
-        email: newAdmin.email
-      }
-    });
-
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Route for email verification - NO option
-app.get('/api/admin/verify/no/:pendingAdminId', async (req, res) => {
-  try {
-    const { pendingAdminId } = req.params;
-
-    // Find the pending admin
-    const pendingAdmin = await PendingAdmin.findById(pendingAdminId);
-    if (!pendingAdmin) {
-      return res.status(404).json({
-        success: false,
-        error: 'Pending admin not found'
-      });
-    }
-
-    // Check if already processed
-    if (pendingAdmin.status !== 'pending') {
-      return res.status(400).json({
-        success: false,
-        error: 'Registration request already processed'
-      });
-    }
-
-    // Update pending admin status to rejected
-    pendingAdmin.status = 'rejected';
-    pendingAdmin.processedDate = new Date();
-    await pendingAdmin.save();
-
-    res.json({
-      success: true,
-      message: 'Admin registration has been declined. The request has been rejected.'
-    });
-
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -421,7 +252,6 @@ app.get('/api/fields', async (req, res) => {
   }
 });
 
-
 // Route that will be hit when admin clicks on field link
 app.get('/api/fields/:fieldId', async (req, res) => {
   try {
@@ -454,12 +284,195 @@ app.get('/api/fields/:fieldId', async (req, res) => {
   }
 });
 
+// Route for admin registration
+app.post('/api/admin/register', async (req, res) => {
+  try {
+    // Retrieve all the information about the new admin
+    const { name, email, phoneNumber, password } = req.body;
+
+    // Validate required fields
+    if (!name || !email || !phoneNumber || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'All fields (name, email, phoneNumber, password) are required'
+      });
+    }
+
+    // Check if admin already exists
+    const existingAdmin = await Admin.findOne({ email: email.toLowerCase() });
+    if (existingAdmin) {
+      return res.status(409).json({
+        success: false,
+        error: 'Admin with this email already exists'
+      });
+    }
+
+    // Check if pending admin already exists
+    const existingPendingAdmin = await PendingAdmin.findOne({ email: email.toLowerCase() });
+    if (existingPendingAdmin) {
+      return res.status(409).json({
+        success: false,
+        error: 'Registration request already pending for this email'
+      });
+    }
+
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Create pending admin
+    const pendingAdmin = new PendingAdmin({
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
+      phoneNumber: phoneNumber.trim(),
+      password: hashedPassword
+    });
+
+    await pendingAdmin.save();
+
+    // Send verification email using nodemailer
+    const mailOptions = {
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: 'Admin Registration Verification - Rashtriya Raksha University',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2>Admin Registration Verification</h2>
+          <p>Dear ${name},</p>
+          <p>You have registered in our website <strong>Rashtriya Raksha University</strong> as an admin. Is it you?</p>
+          <p>Please confirm your registration by clicking one of the options below:</p>
+          <div style="margin: 20px 0;">
+            <a href="${process.env.BASE_URL || 'http://localhost:3000'}/api/admin/verify/yes/${pendingAdmin._id}" 
+               style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; margin-right: 10px; border-radius: 5px;">
+               YES
+            </a>
+            <a href="${process.env.BASE_URL || 'http://localhost:3000'}/api/admin/verify/no/${pendingAdmin._id}" 
+               style="background-color: #f44336; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">
+               NO
+            </a>
+          </div>
+          <p>If you did not register for this account, please click NO.</p>
+          <p>Thank you,<br>Rashtriya Raksha University Team</p>
+        </div>
+      `
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    res.status(201).json({
+      success: true,
+      message: 'Registration request submitted successfully. Please check your email for verification.',
+      pendingAdminId: pendingAdmin._id
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Route for email verification - YES option
+app.get('/api/admin/verify/yes/:pendingAdminId', async (req, res) => {
+  try {
+    const { pendingAdminId } = req.params;
+
+    // Find the pending admin
+    const pendingAdmin = await PendingAdmin.findById(pendingAdminId);
+    if (!pendingAdmin) {
+      return res.status(404).json({
+        success: false,
+        error: 'Pending admin not found'
+      });
+    }
+
+    // Check if already processed
+    if (pendingAdmin.status !== 'pending') {
+      return res.status(400).json({
+        success: false,
+        error: 'Registration request already processed'
+      });
+    }
+
+    // Create the admin
+    const newAdmin = new Admin({
+      name: pendingAdmin.name,
+      email: pendingAdmin.email,
+      phoneNumber: pendingAdmin.phoneNumber,
+      password: pendingAdmin.password
+    });
+
+    await newAdmin.save();
+
+    // Update pending admin status
+    pendingAdmin.status = 'approved';
+    pendingAdmin.processedDate = new Date();
+    await pendingAdmin.save();
+
+    res.json({
+      success: true,
+      message: 'Admin registration confirmed successfully! You can now login.',
+      admin: {
+        id: newAdmin._id,
+        name: newAdmin.name,
+        email: newAdmin.email
+      }
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Route for email verification - NO option
+app.get('/api/admin/verify/no/:pendingAdminId', async (req, res) => {
+  try {
+    const { pendingAdminId } = req.params;
+
+    // Find the pending admin
+    const pendingAdmin = await PendingAdmin.findById(pendingAdminId);
+    if (!pendingAdmin) {
+      return res.status(404).json({
+        success: false,
+        error: 'Pending admin not found'
+      });
+    }
+
+    // Check if already processed
+    if (pendingAdmin.status !== 'pending') {
+      return res.status(400).json({
+        success: false,
+        error: 'Registration request already processed'
+      });
+    }
+
+    // Update pending admin status to rejected
+    pendingAdmin.status = 'rejected';
+    pendingAdmin.processedDate = new Date();
+    await pendingAdmin.save();
+
+    res.json({
+      success: true,
+      message: 'Admin registration has been declined. The request has been rejected.'
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 
 // Route for admin to add new MOU
 app.post('/api/mous', async (req, res) => {
   try {
     // Retrieve the information about the MOU from request body
     const { ID, nameOfPartnerInstitution, strategicAreas } = req.body;
+    
     // Validate required fields
     if (!ID || !nameOfPartnerInstitution || !strategicAreas) {
       return res.status(400).json({
@@ -467,6 +480,7 @@ app.post('/api/mous', async (req, res) => {
         error: 'All fields (ID, nameOfPartnerInstitution, strategicAreas) are required'
       });
     }
+    
     // Check if MOU with same ID already exists
     const existingMOU = await MOU.findOne({ ID: ID });
     if (existingMOU) {
@@ -475,9 +489,11 @@ app.post('/api/mous', async (req, res) => {
         error: 'MOU with this ID already exists'
       });
     }
+    
     // Check if the school name exists in the School schema
     const trimmedSchoolName = nameOfPartnerInstitution.trim();
     let existingSchool = await School.findOne({ name: trimmedSchoolName });
+    
     if (!existingSchool) {
       // If school doesn't exist, create new school with count = 1
       const newSchool = new School({
@@ -490,20 +506,24 @@ app.post('/api/mous', async (req, res) => {
       existingSchool.count += 1;
       await existingSchool.save();
     }
+    
     // Create new MOU object
     const newMOU = new MOU({
       ID: ID.trim(),
       nameOfPartnerInstitution: trimmedSchoolName,
       strategicAreas: strategicAreas.trim()
     });
+    
     // Save the MOU in the database
     const savedMOU = await newMOU.save();
+    
     // Return success response
     res.status(201).json({
       success: true,
       message: 'MOU added successfully',
       data: savedMOU
     });
+    
   } catch (error) {
     // Handle duplicate key error specifically
     if (error.code === 11000) {
@@ -512,6 +532,7 @@ app.post('/api/mous', async (req, res) => {
         error: 'MOU with this ID already exists'
       });
     }
+    
     // Handle validation errors
     if (error.name === 'ValidationError') {
       return res.status(400).json({
@@ -519,6 +540,7 @@ app.post('/api/mous', async (req, res) => {
         error: error.message
       });
     }
+    
     // Handle other errors
     res.status(500).json({
       success: false,
@@ -527,10 +549,7 @@ app.post('/api/mous', async (req, res) => {
   }
 });
 
-//create new courses
-
-
-    // Route for admin to add new Course
+// Route for admin to add new Course
 app.post('/api/courses', async (req, res) => {
   try {
     // Retrieve all the information about the course from request body
