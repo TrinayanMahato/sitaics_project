@@ -1,0 +1,45 @@
+
+# 🎓 University Admin Panel - MERN Stack Dashboard
+
+This project is a **comprehensive Admin Dashboard** for managing academic data at a university. Built using the **MERN stack (MongoDB, Express.js, React.js, Node.js)**, the dashboard allows administrators to view and manage data related to **MoUs, courses, training participants, and sector-specific programs**.
+
+---
+
+## 🚀 Features
+
+The dashboard consists of **6 main interactive buttons**, each rendering structured and filtered information from the backend:
+
+### 1️⃣ No. of MoUs
+- Displays a list of all **MoUs** (Memorandums of Understanding) signed by the university.
+
+### 2️⃣ Ongoing Courses
+- Shows all **ongoing courses** currently being conducted at the university.
+
+### 3️⃣ MoU Activities under Schools
+- Displays a list of **schools** with at least one signed MoU.
+- On clicking a school, it reveals all MoUs signed under that particular school.
+
+### 4️⃣ Total Number of Courses
+- Lists all **completed courses** conducted by the university.
+
+### 5️⃣ Total Number of Participants Trained
+- Shows a list of all **participants** who have either completed or are undergoing a course.
+
+### 6️⃣ Sector-Specific Training Programs
+- Displays a list of **fields/sectors** (e.g., Cybersecurity, AI, etc.) on which training is offered.
+- Clicking on a sector reveals all **courses** conducted in that specific field.
+
+---
+
+## 🛠️ Tech Stack
+
+| Layer       | Technology         |
+|-------------|--------------------|
+| Frontend    | React.js, Tailwind CSS |
+| Backend     | Node.js, Express.js |
+| Database    | MongoDB + Mongoose |
+| Auth (if any)| JWT, bcrypt (optional) |
+| Deployment  | Vercel / Render / Railway / Netlify / Heroku (as per use) |
+
+---
+
