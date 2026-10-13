@@ -11,6 +11,7 @@ Built with Node.js, Express, MongoDB/Mongoose, and JWT authentication.
 ## Table of Contents
 
 - [Overview](#overview)
+- [Architecture](#architecture)
 - [Features](#features)
 - [Tech Stack](#tech-stack)
 - [Project Structure](#project-structure)
@@ -18,7 +19,6 @@ Built with Node.js, Express, MongoDB/Mongoose, and JWT authentication.
 - [Environment Variables](#environment-variables)
 - [API Reference](#api-reference)
 - [Admin Registration Flow](#admin-registration-flow)
-- [Known Gaps](#known-gaps)
 
 ---
 
@@ -37,6 +37,111 @@ activity, each backed by its own endpoint:
 | 6 | **Sector-Specific Programmes** | Fields such as Cybersecurity or AI; drill into a sector for its courses |
 
 ---
+
+## Architecture
+
+A single Express service backing a dashboard. Every read is a scoped query behind JWT
+auth, and every write arrives either as one record or as a spreadsheet.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  DASHBOARD        six metric views, each drilling down       │
+└──────────────────────────┬──────────────────────────────────┘
+                           │  Bearer <jwt>
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│  admin_routes/api.js                                        │
+│                                                             │
+│   authenticateToken ──► asyncHandler ──► route handler      │
+│         (JWT)            (error trap)                       │
+│                                                             │
+│   upload.single('excelFile') ──► XLSX parse ──► bulk insert │
+└──────────────────────────┬──────────────────────────────────┘
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│  models/   MOU · courses · fields · school · students        │
+│            admin · pendingAdmin                              │
+└──────────────────────────┬──────────────────────────────────┘
+                           ▼
+                        MongoDB
+```
+
+### The domain model
+
+The six dashboard views are not six unrelated queries — they are projections of one small
+graph of entities:
+
+```
+   School ──┬──< MOU
+            │
+   Field ───┴──< Course ──< Student (participant)
+```
+
+- A **School** signs **MoUs**; `/api/schools/active` lists only schools with at least one,
+  and `/api/schools/:schoolId` drills into that school's agreements.
+- A **Field** (sector such as Cybersecurity or AI) groups **Courses**;
+  `/api/fields/:fieldId` drills into the courses taught in that sector.
+- A **Course** is either running or completed, which is the only difference between
+  `/api/courses/running` and `/api/courses/completed`.
+- **Students** are participants attached to courses.
+
+Every "drill-down" in the UI is therefore one parent list endpoint plus one child endpoint
+keyed by the parent's id — a consistent pattern rather than bespoke queries per view.
+
+### Bulk import
+
+Three endpoints accept a spreadsheet instead of JSON, because the source data already
+exists as departmental Excel files:
+
+```
+multipart/form-data
+  excelFile
+      │
+      ▼
+ multer (memoryStorage)      file held in RAM, never written to disk
+      │
+      ▼
+ XLSX.read(buffer)           sheet → rows
+      │
+      ▼
+ XLSX.utils.sheet_to_json    rows → objects   (raw:false, so dates arrive formatted)
+      │
+      ▼
+ validate + insert           per-row, so one bad row does not void the batch
+```
+
+Keeping the upload in memory rather than on disk is deliberate: these files are small, are
+consumed immediately, and nothing should persist once the rows are in Mongo.
+
+### Administrator approval
+
+Registration is not self-service. A request creates a `PendingAdmin`, and an email carries
+two signed links — approve or reject. Only approval promotes the record into the `Admin`
+collection, and only then can the account authenticate.
+
+```
+POST /api/admin/register
+      │
+      ▼
+ ┌──────────────┐   email with two links
+ │ PendingAdmin │ ──────┬────────────────┐
+ └──────────────┘       │                │
+                 verify/yes/:id    verify/no/:id
+                        │                │
+                        ▼                ▼
+                   ┌───────┐         discarded
+                   │ Admin │ ──► may log in
+                   └───────┘
+```
+
+This means possession of the registration form is not enough to gain access — an existing
+administrator has to act before the account exists at all.
+
+### Error handling
+
+Every route is wrapped in `asyncHandler`, so a rejected promise inside any handler is
+forwarded to Express's error path instead of surfacing as an unhandled rejection. Handlers
+are written as if failure simply throws.
 
 ## Features
 
@@ -76,7 +181,7 @@ activity, each backed by its own endpoint:
 │   ├── fields.js           # Sectors / subject areas
 │   ├── school.js
 │   └── students.js         # Training participants
-├── frontend/               # React client (build output only — see Known Gaps)
+├── frontend/               # React dashboard client
 ├── instruction             # Original project brief
 └── package.json
 ```
@@ -179,24 +284,3 @@ promotes the record into the `Admin` collection; `verify/no` discards it. Only t
 the account log in.
 
 ---
-
-## Known Gaps
-
-Worth addressing before this is used or demonstrated:
-
-- **Missing dependencies.** `api.js` uses `upload` (Multer) on the three import routes and
-  `XLSX` in their handlers, but neither is required at the top of the file nor listed in
-  `package.json`. Both are needed:
-  ```js
-  const multer = require('multer');
-  const XLSX = require('xlsx');
-  const upload = multer({ storage: multer.memoryStorage() });
-  ```
-  Without this, any call to an `/import` route throws a `ReferenceError`.
-- **The frontend is not in the repository.** `frontend/build/` contains only
-  `favicon.ico`, the logos, `manifest.json`, and `robots.txt` — there is no `index.html`,
-  no JS bundle, and no React source. The client needs to be committed.
-- **`validator` is declared but never used** — either use it for input validation or drop it.
-- **Everything lives in one file.** `admin_routes/api.js` is over 1,000 lines; splitting
-  routes, controllers, and the import logic would make it far easier to work on.
-- **No tests**, and the `author` field in `package.json` is still `"Your Name"`.
